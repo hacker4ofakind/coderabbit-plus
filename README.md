@@ -1,6 +1,15 @@
-# CodeRabbit Plus
+<p align="center">
+  <img src="plugins/coderabbit-plus/assets/coderabbit-plus-logo.png" alt="CodeRabbit Plus logo" width="128">
+</p>
 
-![CodeRabbit Plus logo](plugins/coderabbit-plus/assets/coderabbit-plus-logo.png)
+<h1 align="center">CodeRabbit Plus</h1>
+
+<p align="center">
+  <a href="https://github.com/hacker4ofakind/coderabbit-plus/stargazers"><img src="https://img.shields.io/github/stars/hacker4ofakind/coderabbit-plus?style=for-the-badge&amp;logo=github&amp;label=Stars" alt="GitHub stars"></a>
+  <a href="https://github.com/hacker4ofakind/coderabbit-plus/blob/main/LICENSE"><img src="https://img.shields.io/github/license/hacker4ofakind/coderabbit-plus?style=for-the-badge&amp;label=License" alt="MIT license"></a>
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.26%2B-00ADD8?style=for-the-badge&amp;logo=go&amp;logoColor=white" alt="Go 1.26 or newer"></a>
+  <a href="https://developers.openai.com/plugins/build/plugins"><img src="https://img.shields.io/badge/Codex-Plugin-10A37F?style=for-the-badge" alt="Codex plugin"></a>
+</p>
 
 CodeRabbit Plus is an open-source Codex plugin and a small Go wrapper for deep, evidence-backed reviews of a GitHub pull request or latest remote commit. It produces a paste-ready handoff for the implementing agent, without modifying the repository being reviewed.
 
@@ -45,7 +54,13 @@ coderabbit-plus commit feature/my-branch --low
 coderabbit-plus --max pr 123
 ```
 
-`--low` uses a lower-cost model/reasoning setting. `--max` uses the most thorough setting; the options cannot be combined.
+Choose the review depth that fits the change:
+
+- Default (no flag): **GPT-5.6 Sol** with **high** reasoning effort.
+- `--low`: **GPT-5.6 Terra** with **medium** reasoning effort.
+- `--max`: **GPT-6 Astra** with **max** reasoning effort.
+
+`--low` and `--max` cannot be combined.
 
 On success, only the final review is written to standard output. Progress, diagnostics, and Codex JSONL are kept off standard output so the result is easy to hand to an implementing agent.
 
