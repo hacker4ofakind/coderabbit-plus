@@ -1,0 +1,28 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "coderabbit-plus",
+  "version": "1.0.0",
+  "description": "Evidence-backed, diff-scoped CodeRabbit-style review handoffs for Codex.",
+  "author": {
+    "name": "CodeRabbit Plus contributors"
+  },
+  "license": "MIT",
+  "keywords": ["code-review", "codex", "pull-request", "quality"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "CodeRabbit Plus",
+        "shortDescription": "Deep diff review handoffs",
+        "longDescription": "A focused Codex workflow for evidence-backed, actionable reviews of pull requests and changed code.",
+        "developerName": "CodeRabbit Plus contributors",
+        "category": "Productivity",
+        "defaultPrompt": [
+          "Use $coderabbit-plus to audit the current diff and prepare an implementation handoff."
+        ],
+        "brandColor": "#F8733B",
+        "composerIcon": "./assets/coderabbit-plus-logo.png",
+        "logo": "./assets/coderabbit-plus-logo.png"
+      }
+    }
+  }
+}

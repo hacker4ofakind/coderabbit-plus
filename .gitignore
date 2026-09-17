@@ -1,0 +1,7 @@
+# Local Go builds
+*.exe
+/coderabbit-plus
+
+# Editor and test artifacts
+.DS_Store
+coverage.out

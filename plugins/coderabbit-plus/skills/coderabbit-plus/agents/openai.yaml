@@ -1,0 +1,4 @@
+interface:
+  display_name: "CodeRabbit Plus"
+  short_description: "Deep diff review handoffs"
+  default_prompt: "Use $coderabbit-plus to audit the current diff and prepare an implementation handoff."
