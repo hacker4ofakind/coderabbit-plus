@@ -56,8 +56,8 @@ coderabbit-plus --max pr 123
 
 Choose the review depth that fits the change:
 
-- Default (no flag): GPT-5.6 Sol with **high** reasoning effort.
-- `--low`: GPT-5.6 Terra with **medium** reasoning effort.
+- Default (no flag): GPT-6 Sol with **high** reasoning effort.
+- `--low`: GPT-6 Sol with **low** reasoning effort.
 - `--max`: GPT-**6 Astra** with **max** reasoning effort.
 
 `--low` and `--max` cannot be combined.

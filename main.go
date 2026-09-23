@@ -46,7 +46,7 @@ type request struct {
 }
 
 func parseArgs(args []string) (request, error) {
-	r := request{model: "gpt-5.6-sol", effort: "high"}
+	r := request{model: "gpt-6-sol", effort: "high"}
 	var positional []string
 	for _, arg := range args {
 		switch arg {
@@ -79,7 +79,7 @@ func parseArgs(args []string) (request, error) {
 		return r, &cliError{exitUsage, "invalid branch name"}
 	}
 	if r.low {
-		r.model, r.effort = "gpt-5.6-terra", "medium"
+		r.model, r.effort = "gpt-6-sol", "low"
 	} else if r.max {
 		r.model, r.effort = "gpt-6-astra", "max"
 	}
