@@ -16,6 +16,22 @@ func TestParseArgsUsesDefaultModel(t *testing.T) {
 	}
 }
 
+func TestCodexFailureIncludesStderrAndJSONErrors(t *testing.T) {
+	stdout := `{"type":"thread.started","thread_id":"x"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for ` + "`m`" + ` not found."}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"ignored"}}
+{"type":"error","message":"400 model not supported"}
+{"type":"turn.failed","error":{"message":"turn failed: 400"}}`
+	got := codexFailure("Reading additional input from stdin...\n", stdout, "exit status 1")
+	want := "Reading additional input from stdin...\nModel metadata for `m` not found.\n400 model not supported\nturn failed: 400"
+	if got != want {
+		t.Fatalf("codexFailure() = %q, want %q", got, want)
+	}
+	if got := codexFailure("  ", "", "exit status 1"); got != "exit status 1" {
+		t.Fatalf("codexFailure(empty) = %q", got)
+	}
+}
+
 func TestParseArgsAcceptsLowInEitherPosition(t *testing.T) {
 	for _, args := range [][]string{{"--low", "pr", "12"}, {"pr", "12", "--low"}} {
 		r, err := parseArgs(args)

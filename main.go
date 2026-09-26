@@ -312,14 +312,14 @@ func (r runner) review(ctx context.Context, req request, rev revision, skill str
 	cmd := r.command(ctx, "codex", args...)
 	cmd.Dir = r.root
 	cmd.Stdin = strings.NewReader("")
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	cmd.Stdout = io.Discard
+	cmd.Stdout = &stdout
 	if err = cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			return "", &cliError{exitCanceled, "review canceled"}
 		}
-		return "", &cliError{exitCodex, "Codex review failed: " + firstLine(stderr.String(), err.Error())}
+		return "", &cliError{exitCodex, "Codex review failed:\n" + codexFailure(stderr.String(), stdout.String(), err.Error())}
 	}
 	status, statusErr := r.run(ctx, "git", "-C", worktree, "status", "--porcelain=v1", "--untracked-files=all")
 	if statusErr != nil {
@@ -339,15 +339,42 @@ func (r runner) review(ctx context.Context, req request, rev revision, skill str
 	return answer, nil
 }
 
-func firstLine(s, fallback string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		s = fallback
+// codexFailure collects everything Codex reported about a failed run: all of
+// stderr plus the error events from its --json stdout, where the real API
+// errors land.
+func codexFailure(stderr, stdout, fallback string) string {
+	var lines []string
+	if s := strings.TrimSpace(stderr); s != "" {
+		lines = append(lines, s)
 	}
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
+	for _, line := range strings.Split(stdout, "\n") {
+		var ev struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+			Error   struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Item struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			} `json:"item"`
+		}
+		if json.Unmarshal([]byte(line), &ev) != nil {
+			continue
+		}
+		switch {
+		case ev.Type == "error":
+			lines = append(lines, ev.Message)
+		case ev.Type == "turn.failed":
+			lines = append(lines, ev.Error.Message)
+		case ev.Item.Type == "error":
+			lines = append(lines, ev.Item.Message)
+		}
 	}
-	return s
+	if len(lines) == 0 {
+		return fallback
+	}
+	return strings.Join(lines, "\n")
 }
 func normalizeOutput(s string) string {
 	s = strings.TrimRight(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
@@ -403,7 +430,7 @@ func writeError(w io.Writer, err error) int {
 	if errors.As(err, &e) {
 		code = e.code
 	}
-	fmt.Fprintln(w, firstLine(err.Error(), "review failed"))
+	fmt.Fprintln(w, err.Error())
 	return code
 }
 func main() { os.Exit(execute(context.Background(), os.Args[1:], os.Stdout, os.Stderr)) }
