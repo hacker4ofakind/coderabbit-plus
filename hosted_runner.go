@@ -23,6 +23,8 @@ const (
 	modeCommit      = "commit"
 	inputBundle     = "/input/repository.bundle"
 	vibeSkillPath   = "/home/reviewer/.agents/skills/vibe-security/SKILL.md"
+	smallDiffFiles  = 5
+	smallDiffLines  = 50
 )
 
 type reviewInput struct {
@@ -31,7 +33,7 @@ type reviewInput struct {
 }
 
 type reviewOutput struct {
-	Mode, Base, Head, Body string
+	Mode, Base, Head, Body, Depth string
 }
 
 var errSuperseded = errors.New("pull request changed since the review was queued")
@@ -49,7 +51,11 @@ func (s *reviewService) runContainer(ctx context.Context, job reviewJobSpec, pre
 		return result, err
 	}
 
-	input, err := json.Marshal(reviewInput{job.Mode, job.Base, job.Head, previous, s.cfg.Depth, job.PR})
+	r := newRunner()
+	r.root = repo
+	jobInput := reviewInput{job.Mode, job.Base, job.Head, previous, s.cfg.Depth, job.PR}
+	jobInput.Depth = r.hostedDepth(ctx, jobInput)
+	input, err := json.Marshal(jobInput)
 	if err != nil {
 		return result, err
 	}
@@ -84,7 +90,45 @@ func (s *reviewService) runContainer(ctx context.Context, job reviewJobSpec, pre
 		strings.TrimSpace(result.Body) == "" || len(result.Body) > 60_000 {
 		return reviewOutput{}, errors.New("invalid or oversized container review output")
 	}
+	result.Depth = jobInput.Depth
 	return result, nil
+}
+
+func (r runner) hostedDepth(ctx context.Context, input reviewInput) string {
+	if input.Depth != "default" {
+		return input.Depth
+	}
+	_, rev, err := r.hostedRange(ctx, input)
+	if err != nil {
+		return input.Depth
+	}
+	stats, err := r.run(ctx, "git", "--attr-source="+rev.head, "diff", "--numstat", "-z",
+		"--no-renames", "--no-ext-diff", "--no-textconv", rev.base, rev.head, "--")
+	if err == nil && isSmallDiff(string(stats)) {
+		return "low"
+	}
+	return input.Depth
+}
+
+func isSmallDiff(stats string) bool {
+	linesLeft := smallDiffLines
+	for files := 0; stats != ""; files++ {
+		record, rest, complete := strings.Cut(stats, "\x00")
+		if files >= smallDiffFiles || !complete {
+			return false
+		}
+		addedText, fields, _ := strings.Cut(record, "\t")
+		deletedText, path, hasPath := strings.Cut(fields, "\t")
+		added, addedErr := strconv.Atoi(addedText)
+		deleted, deletedErr := strconv.Atoi(deletedText)
+		if !hasPath || path == "" || addedErr != nil || deletedErr != nil ||
+			added < 0 || deleted < 0 || added > linesLeft || deleted > linesLeft-added {
+			return false
+		}
+		linesLeft -= added + deleted
+		stats = rest
+	}
+	return true
 }
 
 func removeCanceledContainer(cidFile string) {
@@ -236,7 +280,7 @@ func reviewJob(ctx context.Context, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(stdout).Encode(reviewOutput{mode, rev.base, rev.head, body})
+	return json.NewEncoder(stdout).Encode(reviewOutput{Mode: mode, Base: rev.base, Head: rev.head, Body: body})
 }
 
 func (r runner) hostedRange(ctx context.Context, input reviewInput) (string, revision, error) {

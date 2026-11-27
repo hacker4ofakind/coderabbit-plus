@@ -187,8 +187,12 @@ func (app githubApp) alreadyPublished(ctx context.Context, job reviewJobSpec, to
 
 func (app githubApp) publish(ctx context.Context, job reviewJobSpec, token string, result reviewOutput) error {
 	mode := map[string]string{modeFull: "Full PR", modeIncremental: "Incremental", modeCommit: "Latest commit"}[result.Mode]
-	body := fmt.Sprintf("%s\n**CodeRabbit Plus • %s review**\n\nReviewed `%s` → `%s`.\n\n%s",
-		job.marker(), mode, result.Base, result.Head, renderHandoff(job, result))
+	body := fmt.Sprintf("%s\n**CodeRabbit Plus • %s review**\n\nReviewed `%s` → `%s`.",
+		job.marker(), mode, result.Base, result.Head)
+	if validDepth(result.Depth) {
+		body += " Review preset `" + result.Depth + "`."
+	}
+	body += "\n\n" + renderHandoff(job, result)
 	if len(body) > 65_000 {
 		return errors.New("rendered review exceeds GitHub's body size limit")
 	}

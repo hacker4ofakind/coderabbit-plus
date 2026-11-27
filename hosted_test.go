@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -143,15 +144,27 @@ func TestHostedRangeUsesGitHistory(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 	git("init", "-b", "main", "--template=")
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(r.root, path), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "--", path)
+	}
 	commit := func(message string) string {
 		git("-c", "user.name=Review Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
 			"commit", "--allow-empty", "-m", message)
 		return git("rev-parse", "HEAD")
 	}
+	write(".gitattributes", "example.dat binary\n")
 	base := commit("baseline")
 	git("checkout", "-b", "previous")
+	write("example.txt", strings.Repeat("previous\n", 51))
 	previous := commit("already reviewed")
+	write("example.txt", strings.Repeat("previous\n", 51)+"incremental\n")
 	head := commit("new push")
+	write("example.dat", "a text file marked as binary\n")
+	binary := commit("binary change")
 	git("checkout", "-b", "rewritten", base)
 	rewritten := commit("force-pushed")
 	for _, tc := range []struct{ wantMode, wantBase, mode, head string }{
@@ -163,6 +176,44 @@ func TestHostedRangeUsesGitHistory(t *testing.T) {
 		mode, rev, err := r.hostedRange(ctx, reviewInput{Mode: tc.mode, Base: base, Head: tc.head, Previous: previous, PR: 12})
 		if err != nil || mode != tc.wantMode || rev.base != tc.wantBase || rev.head != tc.head {
 			t.Fatalf("range %#v returned %q %#v %v", tc, mode, rev, err)
+		}
+	}
+	bare := filepath.Join(t.TempDir(), "repository.git")
+	git("init", "--bare", "--template=", bare)
+	objects := filepath.ToSlash(filepath.Join(r.root, ".git", "objects"))
+	if err := os.WriteFile(filepath.Join(bare, "objects", "info", "alternates"), []byte(objects+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r.root = bare
+	for _, tc := range []struct{ mode, head, configured, want string }{
+		{modeFull, head, "default", "default"},
+		{modeIncremental, head, "default", "low"},
+		{modeCommit, head, "default", "low"},
+		{modeCommit, binary, "default", "default"},
+		{modeCommit, head, "max", "max"},
+		{modeFull, head, "low", "low"},
+	} {
+		input := reviewInput{Mode: tc.mode, Base: base, Head: tc.head, Previous: previous, PR: 12, Depth: tc.configured}
+		if got := r.hostedDepth(ctx, input); got != tc.want {
+			t.Fatalf("hostedDepth(%s, %s, %s) = %s, want %s", tc.mode, tc.head, tc.configured, got, tc.want)
+		}
+	}
+}
+
+func TestIsSmallDiffCountsBothSidesAndLimitsFiles(t *testing.T) {
+	for _, tc := range []struct {
+		stats string
+		want  bool
+	}{
+		{"30\t20\tfile\twith\nwhitespace\x00", true},
+		{"30\t21\tfile\x00", false},
+		{strings.Repeat("0\t1\tfile\x00", 5), true},
+		{strings.Repeat("0\t1\tfile\x00", 6), false},
+		{"-\t-\tbinary\x00", false},
+		{"1\t0\tfile", false},
+	} {
+		if got := isSmallDiff(tc.stats); got != tc.want {
+			t.Fatalf("isSmallDiff(%q) = %t, want %t", tc.stats, got, tc.want)
 		}
 	}
 }
@@ -324,7 +375,8 @@ func TestServicePinsAndPublishesOnlyCurrentSnapshot(t *testing.T) {
 					var data map[string]string
 					if err := json.NewDecoder(req.Body).Decode(&data); err != nil || auth != "Bearer write" ||
 						data["commit_id"] != job.Head || data["event"] != "COMMENT" ||
-						!strings.Contains(data["body"], job.marker()) || !strings.Contains(data["body"], job.Base) {
+						!strings.Contains(data["body"], job.marker()) || !strings.Contains(data["body"], job.Base) ||
+						!strings.Contains(data["body"], "Review preset `low`.") {
 						t.Fatalf("bad GitHub review: %#v, %v", data, err)
 					}
 					return send(nil)
@@ -337,7 +389,7 @@ func TestServicePinsAndPublishesOnlyCurrentSnapshot(t *testing.T) {
 				if requested != job || token != "read" || previous != "" {
 					t.Fatalf("wrong review inputs: %#v %q %q", requested, previous, token)
 				}
-				return reviewOutput{modeFull, job.Base, job.Head, "No issues found in PR #12."}, nil
+				return reviewOutput{Mode: modeFull, Base: job.Base, Head: job.Head, Body: "No issues found in PR #12.", Depth: "low"}, nil
 			})
 			switch scenario {
 			case "posted":
