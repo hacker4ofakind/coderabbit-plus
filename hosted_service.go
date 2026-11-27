@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -255,11 +256,9 @@ func serve(ctx context.Context, path string) error {
 		MaxHeaderBytes: 16 << 10}
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
-	workerDone := make(chan struct{})
-	go func() {
-		defer close(workerDone)
-		s.work(ctx)
-	}()
+	var workers sync.WaitGroup
+	workers.Go(func() { s.work(ctx) })
+	workers.Go(func() { s.workNotices(ctx) })
 	httpErr := make(chan error, 1)
 	go func() { httpErr <- server.Serve(listener) }()
 	log.Printf("CodeRabbit Plus listening on %s", listener.Addr())
@@ -271,7 +270,7 @@ func serve(ctx context.Context, path string) error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_ = server.Shutdown(shutdown)
-	<-workerDone
+	workers.Wait()
 	return err
 }
 
@@ -329,6 +328,9 @@ func (s *reviewService) work(ctx context.Context) {
 			continue
 		}
 		runCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+		if err := s.queue.start(job, time.Now()); err != nil {
+			log.Printf("could not queue running status: %v", err)
+		}
 		err := s.process(runCtx, job.Spec, previous, s.runContainer)
 		cancel()
 		if ctx.Err() != nil {

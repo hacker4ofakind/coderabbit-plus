@@ -85,6 +85,9 @@ func TestWebhookQueueAndAllowlist(t *testing.T) {
 	if _, _, ok := reloaded.next(time.Now()); ok {
 		t.Fatal("synchronize review ran before debounce")
 	}
+	if notice, ok := reloaded.nextNotice(time.Now()); !ok || notice.Phase != reviewQueued || notice.Job.Head != event.PullRequest.Head.SHA {
+		t.Fatalf("review should report its status during debounce: %#v", notice)
+	}
 	if job, _, ok := reloaded.next(time.Now().Add(time.Minute)); !ok || job.Spec.Mode != modeIncremental || job.Spec.Head != event.PullRequest.Head.SHA {
 		t.Fatalf("unexpected queued review: %#v", job)
 	}
@@ -167,6 +170,97 @@ func TestHostedRangeUsesGitHistory(t *testing.T) {
 type testTransport func(*http.Request) (*http.Response, error)
 
 func (fn testTransport) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }
+
+func TestStatusCommentReusesOwnedCommentAndIgnoresOldJobs(t *testing.T) {
+	cfg, event := reviewFixture()
+	job, _, _ := cfg.jobForEvent(event)
+	newer := job
+	newer.Head = strings.Repeat("c", 40)
+	var commentBody string
+	var creates, updates int
+	app := githubApp{slug: "reviewer"}
+	app.http = &http.Client{Transport: testTransport(func(req *http.Request) (*http.Response, error) {
+		response := func(value any) (*http.Response, error) {
+			data, _ := json.Marshal(value)
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(data))}, nil
+		}
+		switch req.Method + " " + req.URL.Path {
+		case "GET /repos/owner/repo/issues/12/comments":
+			comments := []any{map[string]any{"id": 7, "body": statusBody(job, reviewQueued),
+				"user": map[string]string{"login": "someone", "type": "User"}}}
+			if commentBody != "" {
+				comments = append(comments, map[string]any{"id": 8, "body": commentBody,
+					"user": map[string]string{"login": "reviewer[bot]", "type": "Bot"}})
+			}
+			return response(comments)
+		case "POST /repos/owner/repo/issues/12/comments", "PATCH /repos/owner/repo/issues/comments/8":
+			var body map[string]string
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			commentBody = body["body"]
+			if req.Method == http.MethodPost {
+				creates++
+			} else {
+				updates++
+			}
+			return response(nil)
+		default:
+			return nil, fmt.Errorf("unexpected %s %s", req.Method, req.URL.Path)
+		}
+	})}
+	for _, notice := range []reviewNotice{
+		{Job: job, Phase: reviewQueued},
+		{Job: job, Phase: reviewRunning},
+		{Job: job, Phase: reviewPosted},
+		{Job: job, Phase: reviewQueued}, // redelivery after posting
+		{Job: newer, Phase: reviewQueued},
+		{Job: job, Phase: reviewSuperseded},
+	} {
+		if err := app.upsertStatus(context.Background(), notice, "fake-token"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if creates != 1 || updates != 3 || commentBody != statusBody(newer, reviewQueued) {
+		t.Fatalf("expected one comment for latest job, got %d creates, %d updates, and %q", creates, updates, commentBody)
+	}
+}
+
+func TestFinishingStatusDoesNotDropNewPhase(t *testing.T) {
+	cfg, event := reviewFixture()
+	job, _, _ := cfg.jobForEvent(event)
+	q, err := loadReviewQueue(filepath.Join(t.TempDir(), "queue.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Add(time.Second)
+	if err := q.enqueue(job, now); err != nil {
+		t.Fatal(err)
+	}
+	sent, ok := q.nextNotice(now)
+	if !ok || sent.Phase != reviewQueued {
+		t.Fatalf("expected the queued status, got %#v", sent)
+	}
+	running, _, ok := q.next(now)
+	if !ok {
+		t.Fatal("no review available")
+	}
+	if err := q.start(running, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.finishNotice(sent, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if current, ok := q.nextNotice(now); !ok || current.Phase != reviewRunning {
+		t.Fatalf("queued status receipt overwrote newer running status: %#v", current)
+	}
+	if err := q.finish(running, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if current, ok := q.nextNotice(now); !ok || current.Phase != reviewPosted {
+		t.Fatalf("expected a posted status after the review finished: %#v", current)
+	}
+}
 
 func TestRenderHandoffKeepsInnerMarkdownInert(t *testing.T) {
 	job := reviewJobSpec{PR: 12, Head: strings.Repeat("b", 40)}

@@ -138,9 +138,15 @@ func (job reviewJobSpec) prPath() string {
 	return fmt.Sprintf("/repos/%s/pulls/%d", job.Repo, job.PR)
 }
 
-func (app githubApp) checkSnapshot(ctx context.Context, job reviewJobSpec, token string) error {
+func (app githubApp) getPR(ctx context.Context, job reviewJobSpec, token string) (githubPR, error) {
 	var pr githubPR
-	if _, err := app.request(ctx, http.MethodGet, job.prPath(), token, nil, &pr); err != nil {
+	_, err := app.request(ctx, http.MethodGet, job.prPath(), token, nil, &pr)
+	return pr, err
+}
+
+func (app githubApp) checkSnapshot(ctx context.Context, job reviewJobSpec, token string) error {
+	pr, err := app.getPR(ctx, job, token)
+	if err != nil {
 		return err
 	}
 	if !job.matchesPR(pr) {
