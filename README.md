@@ -56,13 +56,19 @@ coderabbit-plus --max pr 123
 
 Choose the review depth that fits the change:
 
-- Default (no flag): GPT-6 Sol with **high** reasoning effort.
-- `--low`: GPT-6 Sol with **low** reasoning effort.
-- `--max`: GPT-**6 Astra** with **max** reasoning effort.
+- The default uses GPT-6.2 Sol with **high** reasoning effort.
+- `--low` uses GPT-6.2 Sol with **low** reasoning effort.
+- `--max` uses GPT-6.2 Astra with **xhigh** reasoning effort.
 
 `--low` and `--max` cannot be combined.
 
 On success, only the final review is written to standard output. Progress, diagnostics, and Codex JSONL are kept off standard output so the result is easy to hand to an implementing agent.
+
+## Self-hosted GitHub reviews
+
+Run `coderabbit-plus serve` on a Linux Docker host such as a 64-bit Raspberry Pi. A GitHub App can request full PR, incremental, and latest-commit reviews on selected private repositories. Each job runs in a fresh container with CodeRabbit Plus and vibe-security installed and publishes a PR review tied to the reviewed commit.
+
+See [the Pi and Tailscale Funnel setup](deploy/README.md).
 
 ## Develop locally
 

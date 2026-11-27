@@ -11,7 +11,7 @@ import (
 
 func TestParseArgsUsesDefaultModel(t *testing.T) {
 	r, err := parseArgs([]string{"pr", "12"})
-	if err != nil || r.model != "gpt-6-sol" || r.effort != "high" {
+	if err != nil || r.model != "gpt-6.2-sol" || r.effort != "high" {
 		t.Fatalf("parseArgs(default) = %#v, %v", r, err)
 	}
 }
@@ -35,7 +35,7 @@ func TestCodexFailureIncludesStderrAndJSONErrors(t *testing.T) {
 func TestParseArgsAcceptsLowInEitherPosition(t *testing.T) {
 	for _, args := range [][]string{{"--low", "pr", "12"}, {"pr", "12", "--low"}} {
 		r, err := parseArgs(args)
-		if err != nil || r.model != "gpt-6-sol" || r.effort != "low" {
+		if err != nil || r.model != "gpt-6.2-sol" || r.effort != "low" {
 			t.Fatalf("parseArgs(%v) = %#v, %v", args, r, err)
 		}
 	}
@@ -44,7 +44,7 @@ func TestParseArgsAcceptsLowInEitherPosition(t *testing.T) {
 func TestParseArgsAcceptsMaxInEitherPosition(t *testing.T) {
 	for _, args := range [][]string{{"--max", "pr", "12"}, {"pr", "12", "--max"}} {
 		r, err := parseArgs(args)
-		if err != nil || r.model != "gpt-6-astra" || r.effort != "max" {
+		if err != nil || r.model != "gpt-6.2-astra" || r.effort != "xhigh" {
 			t.Fatalf("parseArgs(%v) = %#v, %v", args, r, err)
 		}
 	}
@@ -109,7 +109,7 @@ func TestFakePRReviewFlowUsesClosedStdinAndIsolatedWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	answer, err := r.review(context.Background(), request{model: "gpt-6-sol", effort: "high"}, rev, "skill")
+	answer, err := r.review(context.Background(), request{model: "gpt-6.2-sol", effort: "high"}, rev, "skill")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestFakePRReviewFlowUsesClosedStdinAndIsolatedWorktree(t *testing.T) {
 		}
 	}
 	joined := strings.Join(codex, " ")
-	for _, want := range []string{"exec", "--approve-for-me", "--ephemeral", "--json", "-C", "--model gpt-6-sol", "model_reasoning_effort=high", "--output-last-message"} {
+	for _, want := range []string{"exec", "--approve-for-me", "--ephemeral", "--json", "-C", "--model gpt-6.2-sol", "model_reasoning_effort=high", "--output-last-message"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("Codex invocation missing %q: %v", want, codex)
 		}
