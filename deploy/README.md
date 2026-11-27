@@ -4,22 +4,45 @@ Run one service per Codex login on a 64-bit Linux host with Go, Git, Docker Engi
 
 ## Build the runner
 
-On the Pi, point the named build context at your trusted copy of the entire vibe-security skill directory. Include its `SKILL.md` and `references/` when copying it from your machine. The build copies both skills into the image and checks the installed tools. The build context needs no authentication files.
+Run the build from your normal Pi login in the source checkout. If you copied the skill with SCP into your home directory, use the command below. The build copies both skills into the image and checks the installed tools.
 
 ```sh
 docker build --tag coderabbit-plus:runner \
-  --build-context vibe_security=/path/to/vibe-security .
+  --build-context vibe_security="$HOME/vibe-security" .
 go build -o coderabbit-plus .
 ```
 
-For a production setup, run the service as a dedicated host user with access to Docker. The example configuration uses the paths below. Run these commands as that service user with sudo for directory creation, or adjust ownership to match your service account.
+## Create the service account
+
+Run these commands once from your normal Pi login. They create a system account with a private primary group, no home directory, and no login shell. Give this account access to the Pi's system Docker daemon through the `docker` group. Docker socket access grants root-level control of the host. Keep that access with the trusted host service. Review containers have their own user and receive no Docker socket. [Docker Engine permissions](https://docs.docker.com/engine/install/linux-postinstall/#manage-docker-as-a-non-root-user)
 
 ```sh
+sudo useradd --system --user-group --no-create-home \
+  --home-dir /nonexistent --shell /usr/sbin/nologin coderabbit-plus
+sudo usermod -aG docker coderabbit-plus
+sudo install -o root -g root -m 0755 coderabbit-plus /usr/local/bin/coderabbit-plus
 sudo install -d -m 0755 /var/lib/coderabbit-plus
-sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" \
-  /etc/coderabbit-plus /var/lib/coderabbit-plus/spool
+sudo install -d -m 0700 -o coderabbit-plus -g coderabbit-plus /var/lib/coderabbit-plus/spool
+sudo install -d -m 0750 -o root -g coderabbit-plus /etc/coderabbit-plus
 sudo install -d -m 0700 -o 10001 -g 10001 /var/lib/coderabbit-plus/codex
-cp service-config.example.json /etc/coderabbit-plus/config.json
+sudo install -o root -g coderabbit-plus -m 0640 \
+  service-config.example.json /etc/coderabbit-plus/config.json
+```
+
+The host account owns the queue. UID and GID `10001` belong to the reviewer inside the image and own the mounted Codex login directory.
+
+Check that the service account can see the image you built. A successful result means you can use that build as-is. Docker images are shared by users of the same daemon.
+
+```sh
+sudo -u coderabbit-plus -- docker --host unix:///var/run/docker.sock \
+  image inspect coderabbit-plus:runner --format '{{.Id}}'
+```
+
+If your usual Docker context uses a separate daemon, such as a rootless daemon, transfer the image to the system daemon and repeat the check.
+
+```sh
+docker image save coderabbit-plus:runner | \
+  sudo docker --host unix:///var/run/docker.sock image load
 ```
 
 ## Check Docker and sign in
@@ -27,14 +50,18 @@ cp service-config.example.json /etc/coderabbit-plus/config.json
 Run the offline scratch probe before using your subscription. It mounts a temporary Codex home and exercises the actual Codex Linux sandbox.
 
 ```sh
-./coderabbit-plus check-runner /etc/coderabbit-plus/config.json
+sudo -u coderabbit-plus -- env DOCKER_HOST=unix:///var/run/docker.sock \
+  /usr/local/bin/coderabbit-plus check-runner /etc/coderabbit-plus/config.json
 ```
 
 Docker's default seccomp profile can block Bubblewrap from creating its nested namespaces. If the check fails with a namespace error, use the [Docker Engine default profile](https://github.com/moby/moby/blob/master/vendor/github.com/moby/profiles/seccomp/default.json) for your installed Engine release as the input below. The helper retains the baseline filters and adds the namespace and mount syscalls Bubblewrap needs. Set `seccomp_profile` in the config to the resulting absolute path and rerun the probe.
 
 ```sh
-python3 deploy/runner-seccomp.py /path/to/docker-default.json \
-  > /etc/coderabbit-plus/runner-seccomp.json
+python3 deploy/runner-seccomp.py /path/to/docker-default.json |
+  sudo tee /etc/coderabbit-plus/runner-seccomp.json >/dev/null
+sudo chgrp coderabbit-plus /etc/coderabbit-plus/runner-seccomp.json
+sudo chmod 0640 /etc/coderabbit-plus/runner-seccomp.json
+sudoedit /etc/coderabbit-plus/config.json
 ```
 
 The host must also permit unprivileged user namespaces. If the host enforces AppArmor and its policy blocks the probe, `apparmor_profile` can name a loaded, confined policy that permits Bubblewrap's nested mounts. The runner uses a non-root UID, a read-only image filesystem, and zero Docker capabilities.
@@ -42,7 +69,8 @@ The host must also permit unprivileged user namespaces. If the host enforces App
 Enable device code login in your ChatGPT security settings. Then sign in once on this runner and complete the code flow in your browser. Keep this dedicated directory between jobs so Codex can update its session.
 
 ```sh
-docker run --rm --pull=never -it \
+sudo -u coderabbit-plus -- docker --host unix:///var/run/docker.sock \
+  run --rm --pull=never -it \
   --mount type=bind,source=/var/lib/coderabbit-plus/codex,target=/codex-home \
   --entrypoint codex coderabbit-plus:runner login --device-auth \
   -c 'cli_auth_credentials_store="file"'
@@ -53,13 +81,27 @@ The mounted Codex home contains your active account credentials. Use it only for
 ## Register the GitHub App and expose the webhook
 
 1. Register an app with repository permissions **Contents** read-only and **Pull requests** read and write. Subscribe to **Pull request** events. Select **Any account** if you want the same app on multiple organizations.
-2. Generate a GitHub App private key and save it at `private_key_file`. Generate a random webhook secret, save it at `webhook_secret_file`, and enter the same value in the app settings. Keep both files readable only by the service user.
-3. Install the app on selected private repositories. In the service config, set the app ID and slug and add an allowlist entry for each repo. The installation ID is the number in the installation's settings URL. The repository ID is the numeric `id` from GitHub's Get a repository REST endpoint. Use `automatic: false` for the initial test.
-4. Run the service on the Pi. Once verified, supervise this same command with your usual service manager.
+2. Generate and download a GitHub App private key. From the Pi, install the downloaded file and generate a webhook secret once. Replace the PEM source path with the location of your downloaded key. Enter the secret shown by the last command in GitHub's webhook settings.
 
    ```sh
-   ./coderabbit-plus serve /etc/coderabbit-plus/config.json
+   sudo install -o root -g coderabbit-plus -m 0640 \
+     /path/to/downloaded-private-key.pem /etc/coderabbit-plus/github-app.pem
+   sudo sh -ec 'umask 027; set -C; openssl rand -hex 32 > /etc/coderabbit-plus/webhook-secret'
+   sudo chgrp coderabbit-plus /etc/coderabbit-plus/webhook-secret
+   sudo cat /etc/coderabbit-plus/webhook-secret
    ```
+
+3. Install the app on selected private repositories. Run `sudoedit /etc/coderabbit-plus/config.json` to set the app ID and slug and add an allowlist entry for each repo. The installation ID is the number in the installation's settings URL. The repository ID is the numeric `id` from GitHub's Get a repository REST endpoint. Use `automatic: false` for the initial test.
+4. Install and start the systemd service from your checkout. It runs as `coderabbit-plus` and starts again when the Pi reboots.
+
+   ```sh
+   sudo install -o root -g root -m 0644 deploy/coderabbit-plus.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now coderabbit-plus.service
+   sudo systemctl status coderabbit-plus.service --no-pager
+   ```
+
+   Read its logs with `sudo journalctl -u coderabbit-plus.service -f`. After changing the configuration, run `sudo systemctl restart coderabbit-plus.service`.
 
 5. Point Funnel to the loopback listener. For a dedicated Funnel HTTPS port, the command below preserves the requested path when forwarding to the service. If you already use port 443 for something else, use a free Funnel port such as 8443 and include it in the GitHub webhook URL.
 

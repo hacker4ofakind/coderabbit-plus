@@ -1,0 +1,20 @@
+[Unit]
+Description=CodeRabbit Plus GitHub review service
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=simple
+User=coderabbit-plus
+Group=coderabbit-plus
+Environment=DOCKER_HOST=unix:///var/run/docker.sock
+WorkingDirectory=/var/lib/coderabbit-plus/spool
+ExecStart=/usr/local/bin/coderabbit-plus serve /etc/coderabbit-plus/config.json
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=45s
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
