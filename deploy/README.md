@@ -91,7 +91,13 @@ The mounted Codex home contains your active account credentials. Use it only for
    sudo cat /etc/coderabbit-plus/webhook-secret
    ```
 
-3. Install the app on selected private repositories. Run `sudoedit /etc/coderabbit-plus/config.json` to set the app ID and slug and add an allowlist entry for each repo. The installation ID is the number in the installation's settings URL. The repository ID is the numeric `id` from GitHub's Get a repository REST endpoint. Use `automatic: false` for the initial test.
+3. Install the app on selected private repositories. Run `sudoedit /etc/coderabbit-plus/config.json` to set the app ID and slug and add one allowlist entry per repo. The installation ID is the trailing number in the installation's settings URL. Repos covered by the same installation share that ID. To look up each numeric `repository_id`, run this on a machine where `gh` is signed in with access to that private repo. Replace `OWNER/REPO` with its name on GitHub.
+
+   ```sh
+   gh api repos/OWNER/REPO --jq .id
+   ```
+
+   Enter the result as a JSON number and set `repository` to `OWNER/REPO`. Keep `automatic: false` for the initial test.
 4. Install and start the systemd service from your checkout. It runs as `coderabbit-plus` and starts again when the Pi reboots.
 
    ```sh
@@ -103,13 +109,15 @@ The mounted Codex home contains your active account credentials. Use it only for
 
    Read its logs with `sudo journalctl -u coderabbit-plus.service -f`. After changing the configuration, run `sudo systemctl restart coderabbit-plus.service`.
 
-5. Point Funnel to the loopback listener. For a dedicated Funnel HTTPS port, the command below preserves the requested path when forwarding to the service. If you already use port 443 for something else, use a free Funnel port such as 8443 and include it in the GitHub webhook URL.
+5. Add the `/coderabbit-plus` route on Funnel's standard HTTPS port. If port 443 is already a public HTTPS Funnel, this adds a path on the same listener. Check `tailscale funnel status` first if you already use that path. Specify the full local target URL because Funnel strips the public path before forwarding. If port 443 serves a private Tailscale Serve site, keep that site private and choose a different Funnel port.
 
    ```sh
-   tailscale funnel --bg 8876
+   sudo tailscale funnel --bg --https=443 --set-path=/coderabbit-plus \
+     http://127.0.0.1:8876/github/webhook
+   tailscale funnel status
    ```
 
-6. Set the GitHub App webhook URL to the Funnel URL followed by `/github/webhook`. Check the app's recent deliveries for a successful ping. The public listener accepts only this signed POST route.
+6. Set the GitHub App webhook URL to `https://YOUR-PI.YOUR-TAILNET.ts.net/coderabbit-plus` with no trailing slash. Check recent deliveries for a successful ping after the service is up. If you already registered the app with a different URL, edit it in the app settings and redeliver the ping.
 
 ## Trigger reviews
 
