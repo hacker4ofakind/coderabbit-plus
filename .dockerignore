@@ -1,0 +1,8 @@
+**
+!go.mod
+!*.go
+!plugins/
+!plugins/coderabbit-plus/
+!plugins/coderabbit-plus/skills/
+!plugins/coderabbit-plus/skills/coderabbit-plus/
+!plugins/coderabbit-plus/skills/coderabbit-plus/**

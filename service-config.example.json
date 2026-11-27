@@ -1,0 +1,20 @@
+{
+  "app_id": 123456,
+  "app_slug": "your-reviewer",
+  "private_key_file": "/etc/coderabbit-plus/github-app.pem",
+  "webhook_secret_file": "/etc/coderabbit-plus/webhook-secret",
+  "spool_dir": "/var/lib/coderabbit-plus/spool",
+  "codex_home": "/var/lib/coderabbit-plus/codex",
+  "listen": "127.0.0.1:8876",
+  "image": "coderabbit-plus:runner",
+  "depth": "default",
+  "debounce_seconds": 45,
+  "repositories": [
+    {
+      "installation_id": 12345678,
+      "repository_id": 987654321,
+      "repository": "your-account/your-private-repo",
+      "automatic": false
+    }
+  ]
+}

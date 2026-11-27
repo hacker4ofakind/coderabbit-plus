@@ -11,10 +11,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -46,7 +48,7 @@ type request struct {
 }
 
 func parseArgs(args []string) (request, error) {
-	r := request{model: "gpt-6-sol", effort: "high"}
+	r := request{model: "gpt-6.2-sol", effort: "high"}
 	var positional []string
 	for _, arg := range args {
 		switch arg {
@@ -79,9 +81,9 @@ func parseArgs(args []string) (request, error) {
 		return r, &cliError{exitUsage, "invalid branch name"}
 	}
 	if r.low {
-		r.model, r.effort = "gpt-6-sol", "low"
+		r.effort = "low"
 	} else if r.max {
-		r.model, r.effort = "gpt-6-astra", "max"
+		r.model, r.effort = "gpt-6.2-astra", "xhigh"
 	}
 	return r, nil
 }
@@ -298,6 +300,10 @@ func (r runner) review(ctx context.Context, req request, rev revision, skill str
 		return "", &cliError{exitSetup, "could not create disposable worktree"}
 	}
 	added = true
+	return r.reviewCheckout(ctx, req, rev, worktree, prompt(skill, rev), false)
+}
+
+func (r runner) reviewCheckout(ctx context.Context, req request, rev revision, checkout, instructions string, hosted bool) (string, error) {
 	result, err := os.CreateTemp("", "coderabbit-plus-last-message-")
 	if err != nil {
 		return "", &cliError{exitSetup, "could not create temporary result file"}
@@ -308,7 +314,11 @@ func (r runner) review(ctx context.Context, req request, rev revision, skill str
 		return "", &cliError{exitSetup, "could not prepare temporary result file"}
 	}
 	defer os.Remove(resultFile)
-	args := []string{"exec", "--approve-for-me", "--ephemeral", "--json", "-C", worktree, "--model", req.model, "-c", "model_reasoning_effort=" + req.effort, "--output-last-message", resultFile, prompt(skill, rev)}
+	args := []string{"exec", "--approve-for-me", "--ephemeral", "--json", "-C", checkout, "--model", req.model, "-c", "model_reasoning_effort=" + req.effort, "--output-last-message", resultFile}
+	if hosted {
+		args = append(args, "--ignore-user-config", "--ignore-rules", "--disable", "hooks", "-c", "project_doc_max_bytes=0")
+	}
+	args = append(args, instructions)
 	cmd := r.command(ctx, "codex", args...)
 	cmd.Dir = r.root
 	cmd.Stdin = strings.NewReader("")
@@ -319,14 +329,23 @@ func (r runner) review(ctx context.Context, req request, rev revision, skill str
 		if ctx.Err() != nil {
 			return "", &cliError{exitCanceled, "review canceled"}
 		}
+		if hosted {
+			return "", &cliError{exitCodex, "Codex failed; check authentication, plan usage, and the runner sandbox"}
+		}
 		return "", &cliError{exitCodex, "Codex review failed:\n" + codexFailure(stderr.String(), stdout.String(), err.Error())}
 	}
-	status, statusErr := r.run(ctx, "git", "-C", worktree, "status", "--porcelain=v1", "--untracked-files=all")
+	status, statusErr := r.run(ctx, "git", "-C", checkout, "status", "--porcelain=v1", "--untracked-files=all")
 	if statusErr != nil {
 		return "", &cliError{exitSetup, "could not verify disposable worktree"}
 	}
 	if strings.TrimSpace(string(status)) != "" {
 		return "", &cliError{exitCodex, "Codex modified the disposable worktree"}
+	}
+	if hosted {
+		head, err := r.revParse(ctx, "HEAD")
+		if err != nil || head != rev.head {
+			return "", &cliError{exitCodex, "review checkout HEAD changed"}
+		}
 	}
 	data, err := os.ReadFile(resultFile)
 	if err != nil {
@@ -389,6 +408,8 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if err != nil {
 		if e, ok := err.(*cliError); ok && e.message == "help" {
 			fmt.Fprintln(out, "Usage: coderabbit-plus [--low|--max] <pr <number>|commit <branch>>")
+			fmt.Fprintln(out, "       coderabbit-plus serve <config.json>")
+			fmt.Fprintln(out, "       coderabbit-plus check-runner <config.json>")
 			return 0
 		}
 		if e, ok := err.(*cliError); ok && e.message == "version" {
@@ -433,4 +454,26 @@ func writeError(w io.Writer, err error) int {
 	fmt.Fprintln(w, err.Error())
 	return code
 }
-func main() { os.Exit(execute(context.Background(), os.Args[1:], os.Stdout, os.Stderr)) }
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	args := os.Args[1:]
+	switch {
+	case len(args) == 2 && args[0] == "serve":
+		os.Exit(writeServiceError(serve(ctx, args[1])))
+	case len(args) == 2 && args[0] == "check-runner":
+		os.Exit(writeServiceError(checkHostedRunner(ctx, args[1], os.Stdout, os.Stderr)))
+	case len(args) == 1 && args[0] == "review-job":
+		os.Exit(writeServiceError(reviewJob(ctx, os.Stdin, os.Stdout)))
+	default:
+		os.Exit(execute(ctx, args, os.Stdout, os.Stderr))
+	}
+}
+
+func writeServiceError(err error) int {
+	if err == nil {
+		return 0
+	}
+	fmt.Fprintln(os.Stderr, err)
+	return 1
+}
